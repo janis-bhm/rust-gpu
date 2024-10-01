@@ -82,6 +82,7 @@ pub enum SpirvAttribute {
     // `struct` attributes:
     IntrinsicType(IntrinsicType),
     Block,
+    PerPrimitive,
 
     // `fn` attributes:
     Entry(Entry),
@@ -127,6 +128,7 @@ pub struct AggregatedSpirvAttributes {
     pub descriptor_set: Option<Spanned<u32>>,
     pub binding: Option<Spanned<u32>>,
     pub flat: Option<Spanned<()>>,
+    pub per_primitive: Option<Spanned<()>>,
     pub invariant: Option<Spanned<()>>,
     pub input_attachment_index: Option<Spanned<u32>>,
     pub spec_constant: Option<Spanned<SpecConstant>>,
@@ -213,6 +215,9 @@ impl AggregatedSpirvAttributes {
             ),
             Binding(value) => try_insert(&mut self.binding, value, span, "#[spirv(binding)]"),
             Flat => try_insert(&mut self.flat, (), span, "#[spirv(flat)]"),
+            PerPrimitive => {
+                try_insert(&mut self.per_primitive, (), span, "#[spirv(per_primitive)]")
+            }
             Invariant => try_insert(&mut self.invariant, (), span, "#[spirv(invariant)]"),
             InputAttachmentIndex(value) => try_insert(
                 &mut self.input_attachment_index,
@@ -314,6 +319,7 @@ impl CheckSpirvAttrVisitor<'_> {
                 | SpirvAttribute::DescriptorSet(_)
                 | SpirvAttribute::Binding(_)
                 | SpirvAttribute::Flat
+                | SpirvAttribute::PerPrimitive
                 | SpirvAttribute::Invariant
                 | SpirvAttribute::InputAttachmentIndex(_)
                 | SpirvAttribute::SpecConstant(_) => match target {

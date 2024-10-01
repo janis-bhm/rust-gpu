@@ -116,8 +116,10 @@ const BUILTINS: &[(&str, BuiltIn)] = {
         ("layer_per_view_nv", LayerPerViewNV),
         ("mesh_view_count_nv", MeshViewCountNV),
         ("mesh_view_indices_nv", MeshViewIndicesNV),
-        ("bary_coord_nv", BaryCoordNV),
-        ("bary_coord_no_persp_nv", BaryCoordNoPerspNV),
+        ("bary_coord_nv", BaryCoordKHR), // backwards compat
+        ("bary_coord_no_persp_nv", BaryCoordNoPerspKHR), // backwards compat
+        ("bary_coord", BaryCoordKHR),
+        ("bary_coord_no_persp", BaryCoordNoPerspKHR),
         ("frag_size_ext", FragSizeEXT),
         ("frag_invocation_count_ext", FragInvocationCountEXT),
         ("launch_id", BuiltIn::LaunchIdKHR),
@@ -138,6 +140,13 @@ const BUILTINS: &[(&str, BuiltIn)] = {
         ("sm_count_nv", SMCountNV),
         ("warp_id_nv", WarpIDNV),
         ("SMIDNV", SMIDNV),
+        ("primitive_point_indices_ext", PrimitivePointIndicesEXT),
+        ("primitive_line_indices_ext", PrimitiveLineIndicesEXT),
+        (
+            "primitive_triangle_indices_ext",
+            PrimitiveTriangleIndicesEXT,
+        ),
+        ("cull_primitive_ext", CullPrimitiveEXT),
     ]
 };
 
@@ -167,6 +176,7 @@ const STORAGE_CLASSES: &[(&str, StorageClass)] = {
         ("incoming_ray_payload", StorageClass::IncomingRayPayloadKHR),
         ("shader_record_buffer", StorageClass::ShaderRecordBufferKHR),
         ("physical_storage_buffer", PhysicalStorageBuffer),
+        ("task_payload_workgroup_ext", TaskPayloadWorkgroupEXT),
     ]
 };
 
@@ -181,6 +191,8 @@ const EXECUTION_MODELS: &[(&str, ExecutionModel)] = {
         ("compute", GLCompute),
         ("task_nv", TaskNV),
         ("mesh_nv", MeshNV),
+        ("mesh_ext", MeshEXT),
+        ("task_ext", TaskEXT),
         ("ray_generation", ExecutionModel::RayGenerationKHR),
         ("intersection", ExecutionModel::IntersectionKHR),
         ("any_hit", ExecutionModel::AnyHitKHR),
@@ -261,6 +273,19 @@ const EXECUTION_MODES: &[(&str, ExecutionMode, ExecutionModeExtraDim)] = {
         ("output_primitives_nv", OutputPrimitivesNV, Value),
         ("derivative_group_quads_nv", DerivativeGroupQuadsNV, None),
         ("output_triangles_nv", OutputTrianglesNV, None),
+        ("output_lines_ext", ExecutionMode::OutputLinesEXT, None),
+        // (janis): rename to max_ to differentiate them from output_lines_ext,
+        // output_triangles_ext, output_points, which tell the driver which KIND
+        // of primitive is produced, while OutputVertices and
+        // OutputPrimitivesEXT tell the driver HOW MANY vertices/primitives are
+        // produced
+        ("max_vertices", OutputVertices, Value),
+        ("max_primitives", ExecutionMode::OutputPrimitivesEXT, Value),
+        (
+            "output_triangles_ext",
+            ExecutionMode::OutputTrianglesEXT,
+            None,
+        ),
         (
             "pixel_interlock_ordered_ext",
             PixelInterlockOrderedEXT,
@@ -330,6 +355,7 @@ impl Symbols {
                 SpirvAttribute::IntrinsicType(IntrinsicType::RayQueryKhr),
             ),
             ("block", SpirvAttribute::Block),
+            ("per_primitive", SpirvAttribute::PerPrimitive),
             ("flat", SpirvAttribute::Flat),
             ("invariant", SpirvAttribute::Invariant),
             (
@@ -600,6 +626,11 @@ fn parse_entry_attrs(
     let mut origin_mode: Option<ExecutionMode> = None;
     let mut local_size: Option<[u32; 3]> = None;
     let mut local_size_hint: Option<[u32; 3]> = None;
+
+    let mut mesh_output: Option<ExecutionMode> = None;
+    let mut mesh_vertex_count: Option<u32> = None;
+    let mut mesh_primitive_count: Option<u32> = None;
+
     // Reserved
     //let mut max_workgroup_size_intel: Option<[u32; 3]> = None;
     if let Some(attrs) = arg.meta_item_list() {
@@ -624,6 +655,26 @@ fn parse_entry_attrs(
                                     attr_name.span,
                                     String::from(
                                         "`#[spirv(compute(threads))]` may only be specified once",
+                                    ),
+                                ));
+                            }
+                        }
+                        OutputVertices => {
+                            mesh_vertex_count.replace(parse_attr_int_value(attr)?);
+                        }
+                        &ExecutionMode::OutputPrimitivesEXT => {
+                            mesh_primitive_count.replace(parse_attr_int_value(attr)?);
+                        }
+                        OutputPoints
+                        | &ExecutionMode::OutputTrianglesEXT
+                        | &ExecutionMode::OutputLinesEXT => {
+                            if mesh_output.is_none() {
+                                mesh_output.replace(*execution_mode);
+                            } else {
+                                return Err((
+                                    attr_name.span,
+                                    String::from(
+                                        "mesh shaders must specify exactly one of `output_triangle_ext`, `output_points`, and `output_lines_ext`",
                                     ),
                                 ));
                             }
@@ -715,7 +766,7 @@ fn parse_entry_attrs(
                 .execution_modes
                 .push((origin_mode, ExecutionModeExtra::new([])));
         }
-        GLCompute | MeshNV | TaskNV => {
+        GLCompute | MeshNV | TaskNV | MeshEXT | TaskEXT => {
             if let Some(local_size) = local_size {
                 entry
                     .execution_modes
@@ -724,9 +775,54 @@ fn parse_entry_attrs(
                 return Err((
                     arg.span(),
                     String::from(
-                        "The `threads` argument must be specified when using `#[spirv(compute)]`, `#[spirv(mesh_nv)]` or `#[spirv(task_nv)]`",
+                        "The `threads` argument must be specified when using `#[spirv(compute)]`, `#spirv(mesh_ext)`, `#spirv(task_ext)`, `#[spirv(mesh_nv)]` or `#[spirv(task_nv)]`",
                     ),
                 ));
+            }
+
+            match entry.execution_model {
+                MeshEXT => {
+                    if let Some(count) = mesh_vertex_count {
+                        entry
+                            .execution_modes
+                            .push((OutputVertices, ExecutionModeExtra::new([count])));
+                    } else {
+                        return Err((
+                            arg.span(),
+                            String::from(
+                                "`max_vertices` must be specified when using `#[spirv(mesh_ext)]`",
+                            ),
+                        ));
+                    }
+                    if let Some(count) = mesh_primitive_count {
+                        entry.execution_modes.push((
+                            ExecutionMode::OutputPrimitivesEXT,
+                            ExecutionModeExtra::new([count]),
+                        ));
+                    } else {
+                        return Err((
+                            arg.span(),
+                            String::from(
+                                "`max_primitives` must be specified when using `#[spirv(mesh_ext)]`",
+                            ),
+                        ));
+                    }
+
+                    if let Some(mode) = mesh_output {
+                        entry
+                            .execution_modes
+                            .push((mode, ExecutionModeExtra::new([])));
+                    } else {
+                        return Err((
+                            arg.span(),
+                            String::from(
+                                "One of `output_points`, `output_triangles_ext`, `output_lines_ext` must be specified when using `#[spirv(mesh_ext)]`",
+                            ),
+                        ));
+                    }
+                }
+                // TODO: TaskEXT
+                _ => {}
             }
         }
         //TODO: Cover more defaults

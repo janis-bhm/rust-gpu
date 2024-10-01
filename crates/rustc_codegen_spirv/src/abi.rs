@@ -4,7 +4,7 @@
 use crate::attr::{AggregatedSpirvAttributes, IntrinsicType};
 use crate::codegen_cx::CodegenCx;
 use crate::spirv_type::SpirvType;
-use rspirv::spirv::{StorageClass, Word};
+use rspirv::spirv::{Dim, ImageFormat, StorageClass, Word};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_errors::ErrorGuaranteed;
 use rustc_index::Idx;
@@ -876,13 +876,28 @@ fn trans_intrinsic_type<'tcx>(
                         .err(format!("Invalid value for Image const generic: {value}"))),
                 }
             }
+            fn from_const<'tcx, T, F: FnOnce(u32) -> Option<T>>(
+                cx: &CodegenCx<'tcx>,
+                const_: Const<'tcx>,
+                f: F,
+            ) -> Result<T, ErrorGuaranteed> {
+                assert!(const_.ty().is_integral());
+                let value = const_.eval_bits(cx.tcx, ParamEnv::reveal_all());
+                match f(value as u32) {
+                    Some(v) => Ok(v),
+                    None => Err(cx
+                        .tcx
+                        .dcx()
+                        .err(format!("Invalid value for Image const generic: {value}"))),
+                }
+            }
 
-            let dim = const_int_value(cx, args.const_at(1))?;
-            let depth = const_int_value(cx, args.const_at(2))?;
-            let arrayed = const_int_value(cx, args.const_at(3))?;
-            let multisampled = const_int_value(cx, args.const_at(4))?;
-            let sampled = const_int_value(cx, args.const_at(5))?;
-            let image_format = const_int_value(cx, args.const_at(6))?;
+            let dim = from_const(cx, args.const_at(1), Dim::from_u32)?;
+            let depth = from_const(cx, args.const_at(2), Option::Some)?;
+            let arrayed = from_const(cx, args.const_at(3), Option::Some)?;
+            let multisampled = from_const(cx, args.const_at(4), Option::Some)?;
+            let sampled = from_const(cx, args.const_at(5), Option::Some)?;
+            let image_format = from_const(cx, args.const_at(6), ImageFormat::from_u32)?;
 
             let ty = SpirvType::Image {
                 sampled_type,
