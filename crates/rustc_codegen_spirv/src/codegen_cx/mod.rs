@@ -3,6 +3,7 @@ mod declare;
 mod entry;
 mod type_;
 
+use crate::attr::{AggregatedSpirvAttributes, SpirvAttribute};
 use crate::builder::{ExtInst, InstructionTable};
 use crate::builder_spirv::{BuilderCursor, BuilderSpirv, SpirvConst, SpirvValue, SpirvValueKind};
 use crate::custom_decorations::{CustomDecoration, SrcLocDecoration, ZombieDecoration};

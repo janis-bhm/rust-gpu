@@ -223,6 +223,7 @@ impl<'tcx> ConstMethods<'tcx> for CodegenCx<'tcx> {
             align,
             field_types: &field_types,
             field_offsets: &field_offsets,
+            field_defs: &[],
             field_names: None,
         }
         .def(DUMMY_SP, self);

@@ -1,4 +1,5 @@
 use crate::abi::{RecursivePointeeCache, TyLayoutNameKey};
+use crate::attr::AggregatedSpirvAttributes;
 use crate::builder_spirv::SpirvValue;
 use crate::codegen_cx::CodegenCx;
 use indexmap::IndexSet;
@@ -39,6 +40,7 @@ pub enum SpirvType<'tcx> {
         size: Option<Size>,
         field_types: &'tcx [Word],
         field_offsets: &'tcx [Size],
+        field_defs: &'tcx [(u32, DefId)],
         field_names: Option<&'tcx [Symbol]>,
     },
     Vector {
@@ -157,6 +159,7 @@ impl SpirvType<'_> {
                 size: _,
                 field_types,
                 field_offsets,
+                field_defs,
                 field_names,
             } => {
                 let mut emit = cx.emit_global();
@@ -171,6 +174,27 @@ impl SpirvType<'_> {
                             .iter()
                             .cloned(),
                     );
+                }
+                for (i, def) in field_defs.iter().copied() {
+                    let attrs =
+                        AggregatedSpirvAttributes::parse(cx, cx.tcx.get_attrs_unchecked(def));
+                    if let Some(builtin) = attrs.builtin {
+                        emit.member_decorate(
+                            result,
+                            i as u32,
+                            Decoration::BuiltIn,
+                            std::iter::once(Operand::BuiltIn(builtin.value)),
+                        );
+                    }
+                    if let Some(_) = attrs.per_primitive {
+                        emit.member_decorate(
+                            result,
+                            i as u32,
+                            Decoration::PerPrimitiveEXT,
+                            std::iter::empty(),
+                        );
+                    }
+                    // emit.member_decorate(result, index as u32, Decoration::BuiltIn, []);
                 }
                 if let Some(field_names) = field_names {
                     for (index, field_name) in field_names.iter().enumerate() {
@@ -438,6 +462,7 @@ impl SpirvType<'_> {
                 size,
                 field_types,
                 field_offsets,
+                field_defs,
                 field_names,
             } => SpirvType::Adt {
                 def_id,
@@ -445,6 +470,7 @@ impl SpirvType<'_> {
                 size,
                 field_types: arena_alloc_slice(cx, field_types),
                 field_offsets: arena_alloc_slice(cx, field_offsets),
+                field_defs: arena_alloc_slice(cx, field_defs),
                 field_names: field_names.map(|field_names| arena_alloc_slice(cx, field_names)),
             },
             SpirvType::Function {
@@ -506,6 +532,7 @@ impl fmt::Debug for SpirvTypePrinter<'_, '_> {
                 size,
                 field_types,
                 field_offsets,
+                field_defs,
                 field_names,
             } => {
                 let fields = field_types
@@ -519,6 +546,7 @@ impl fmt::Debug for SpirvTypePrinter<'_, '_> {
                     .field("size", &size)
                     .field("field_types", &fields)
                     .field("field_offsets", &field_offsets)
+                    .field("field_defs", &field_defs)
                     .field("field_names", &field_names)
                     .finish()
             }
@@ -654,6 +682,7 @@ impl SpirvTypePrinter<'_, '_> {
                 size: _,
                 field_types,
                 field_offsets: _,
+                field_defs: _,
                 ref field_names,
             } => {
                 write!(f, "struct")?;

@@ -371,6 +371,7 @@ impl<'tcx> ConvSpirvType<'tcx> for TyAndLayout<'tcx> {
                 align: Align::from_bytes(0).unwrap(),
                 field_types: &[],
                 field_offsets: &[],
+                field_defs: &[],
                 field_names: None,
             }
             .def_with_name(cx, span, TyLayoutNameKey::from(*self)),
@@ -423,11 +424,13 @@ impl<'tcx> ConvSpirvType<'tcx> for TyAndLayout<'tcx> {
                 };
                 // FIXME(eddyb) use `ArrayVec` here.
                 let mut field_names = Vec::new();
+                let mut field_defs = Vec::new();
                 if let TyKind::Adt(adt, _) = self.ty.kind() {
                     if let Variants::Single { index } = self.variants {
                         for i in self.fields.index_by_increasing_offset() {
                             let field = &adt.variants()[index].fields[i.into()];
                             field_names.push(field.name);
+                            field_defs.push((i as u32, field.did));
                         }
                     }
                 }
@@ -436,6 +439,7 @@ impl<'tcx> ConvSpirvType<'tcx> for TyAndLayout<'tcx> {
                     size,
                     align: self.align.abi,
                     field_types: &[a, b],
+                    field_defs: &field_defs,
                     field_offsets: &[a_offset, b_offset],
                     field_names: if field_names.len() == 2 {
                         Some(&field_names)
@@ -609,6 +613,7 @@ fn trans_aggregate<'tcx>(cx: &CodegenCx<'tcx>, span: Span, ty: TyAndLayout<'tcx>
             align: Align::from_bytes(0).unwrap(),
             field_types: &[],
             field_offsets: &[],
+            field_defs: &[],
             field_names: None,
         }
         .def_with_name(cx, span, TyLayoutNameKey::from(ty))
@@ -708,6 +713,7 @@ fn trans_struct<'tcx>(cx: &CodegenCx<'tcx>, span: Span, ty: TyAndLayout<'tcx>) -
     let mut field_types = Vec::new();
     let mut field_offsets = Vec::new();
     let mut field_names = Vec::new();
+    let mut field_defs = Vec::new();
     for i in ty.fields.index_by_increasing_offset() {
         let field_ty = ty.field(cx, i);
         field_types.push(field_ty.spirv_type(span, cx));
@@ -717,12 +723,14 @@ fn trans_struct<'tcx>(cx: &CodegenCx<'tcx>, span: Span, ty: TyAndLayout<'tcx>) -
             if let TyKind::Adt(adt, _) = ty.ty.kind() {
                 let field = &adt.variants()[index].fields[i.into()];
                 field_names.push(field.name);
+                field_defs.push((i as u32, field.did));
             } else {
                 // FIXME(eddyb) this looks like something that should exist in rustc.
                 field_names.push(Symbol::intern(&format!("{i}")));
             }
         } else {
             if let TyKind::Adt(_, _) = ty.ty.kind() {
+                // (janis): enum variants cant meaningfully be decorated, can they?
             } else {
                 span_bug!(span, "Variants::Multiple not TyKind::Adt");
             }
@@ -740,6 +748,7 @@ fn trans_struct<'tcx>(cx: &CodegenCx<'tcx>, span: Span, ty: TyAndLayout<'tcx>) -
         field_types: &field_types,
         field_offsets: &field_offsets,
         field_names: Some(&field_names),
+        field_defs: &field_defs,
     }
     .def_with_name(cx, span, TyLayoutNameKey::from(ty))
 }

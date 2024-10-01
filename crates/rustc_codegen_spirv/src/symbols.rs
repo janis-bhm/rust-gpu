@@ -26,6 +26,7 @@ pub struct Symbols {
 
     descriptor_set: Symbol,
     binding: Symbol,
+    location: Symbol,
     input_attachment_index: Symbol,
 
     spec_constant: Symbol,
@@ -420,6 +421,7 @@ impl Symbols {
 
             descriptor_set: Symbol::intern("descriptor_set"),
             binding: Symbol::intern("binding"),
+            location: Symbol::intern("location"),
             input_attachment_index: Symbol::intern("input_attachment_index"),
 
             spec_constant: Symbol::intern("spec_constant"),
@@ -498,6 +500,8 @@ pub(crate) fn parse_attrs_for_checking<'a>(
                     SpirvAttribute::DescriptorSet(parse_attr_int_value(arg)?)
                 } else if arg.has_name(sym.binding) {
                     SpirvAttribute::Binding(parse_attr_int_value(arg)?)
+                } else if arg.has_name(sym.location) {
+                    SpirvAttribute::Location(parse_attr_int_value(arg)?)
                 } else if arg.has_name(sym.input_attachment_index) {
                     SpirvAttribute::InputAttachmentIndex(parse_attr_int_value(arg)?)
                 } else if arg.has_name(sym.spec_constant) {

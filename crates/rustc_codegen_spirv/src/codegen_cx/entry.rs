@@ -704,6 +704,20 @@ impl<'tcx> CodegenCx<'tcx> {
             );
             decoration_supersedes_location = true;
         }
+        if let Some(binding) = attrs.location {
+            if let Err(SpecConstant { .. }) = storage_class {
+                self.tcx.dcx().span_fatal(
+                    binding.span,
+                    "`#[spirv(location = ...)]` cannot apply to `#[spirv(spec_constant)]`",
+                );
+            }
+            self.emit_global().decorate(
+                var_id.unwrap(),
+                Decoration::Location,
+                std::iter::once(Operand::LiteralBit32(binding.value)),
+            );
+            decoration_supersedes_location = true;
+        }
         if let Some(binding) = attrs.binding {
             if let Err(SpecConstant { .. }) = storage_class {
                 self.tcx.dcx().span_fatal(
@@ -807,22 +821,27 @@ impl<'tcx> CodegenCx<'tcx> {
         // individually.
         // TODO: Is this right for UniformConstant? Do they share locations with
         // input/outpus?
-        let has_location = !decoration_supersedes_location
-            && matches!(
-                storage_class,
-                Ok(StorageClass::Input | StorageClass::Output | StorageClass::UniformConstant)
-            );
-        if has_location {
-            let location = decoration_locations
-                .entry(storage_class.unwrap())
-                .or_insert_with(|| 0);
-            self.emit_global().decorate(
-                var_id.unwrap(),
-                Decoration::Location,
-                std::iter::once(Operand::LiteralBit32(*location)),
-            );
-            *location += 1;
-        }
+
+        // (janis): not all inputs or outputs must have a location, and one
+        // might wish to skip a location binding. location should be specified
+        // explicitly
+
+        // let has_location = !decoration_supersedes_location
+        //     && matches!(
+        //         storage_class,
+        //         Ok(StorageClass::Input | StorageClass::Output | StorageClass::UniformConstant)
+        //     );
+        // if has_location {
+        //     let location = decoration_locations
+        //         .entry(storage_class.unwrap())
+        //         .or_insert_with(|| 0);
+        //     self.emit_global().decorate(
+        //         var_id.unwrap(),
+        //         Decoration::Location,
+        //         std::iter::once(Operand::LiteralBit32(*location)),
+        //     );
+        //     *location += 1;
+        // }
 
         match storage_class {
             Ok(storage_class) => {

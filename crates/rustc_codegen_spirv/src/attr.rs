@@ -91,6 +91,7 @@ pub enum SpirvAttribute {
     StorageClass(StorageClass),
     Builtin(BuiltIn),
     DescriptorSet(u32),
+    Location(u32),
     Binding(u32),
     Flat,
     Invariant,
@@ -127,6 +128,7 @@ pub struct AggregatedSpirvAttributes {
     pub builtin: Option<Spanned<BuiltIn>>,
     pub descriptor_set: Option<Spanned<u32>>,
     pub binding: Option<Spanned<u32>>,
+    pub location: Option<Spanned<u32>>,
     pub flat: Option<Spanned<()>>,
     pub per_primitive: Option<Spanned<()>>,
     pub invariant: Option<Spanned<()>>,
@@ -214,6 +216,7 @@ impl AggregatedSpirvAttributes {
                 "#[spirv(descriptor_set)]",
             ),
             Binding(value) => try_insert(&mut self.binding, value, span, "#[spirv(binding)]"),
+            Location(value) => try_insert(&mut self.location, value, span, "#[spirv(location)]"),
             Flat => try_insert(&mut self.flat, (), span, "#[spirv(flat)]"),
             PerPrimitive => {
                 try_insert(&mut self.per_primitive, (), span, "#[spirv(per_primitive)]")
@@ -318,53 +321,66 @@ impl CheckSpirvAttrVisitor<'_> {
                 | SpirvAttribute::Builtin(_)
                 | SpirvAttribute::DescriptorSet(_)
                 | SpirvAttribute::Binding(_)
+                | SpirvAttribute::Location(_)
                 | SpirvAttribute::Flat
                 | SpirvAttribute::PerPrimitive
                 | SpirvAttribute::Invariant
                 | SpirvAttribute::InputAttachmentIndex(_)
-                | SpirvAttribute::SpecConstant(_) => match target {
-                    Target::Param => {
-                        let parent_hir_id = self.tcx.parent_hir_id(hir_id);
-                        let parent_is_entry_point =
-                            parse_attrs(self.tcx.hir().attrs(parent_hir_id))
-                                .filter_map(|r| r.ok())
-                                .any(|(_, attr)| matches!(attr, SpirvAttribute::Entry(_)));
-                        if !parent_is_entry_point {
-                            self.tcx.dcx().span_err(
-                                span,
-                                "attribute is only valid on a parameter of an entry-point function",
-                            );
-                        } else {
-                            // FIXME(eddyb) should we just remove all 5 of these storage class
-                            // attributes, instead of disallowing them here?
-                            if let SpirvAttribute::StorageClass(storage_class) = parsed_attr {
-                                let valid = match storage_class {
-                                    StorageClass::Input | StorageClass::Output => {
-                                        Err("is the default and should not be explicitly specified")
-                                    }
-
-                                    StorageClass::Private
-                                    | StorageClass::Function
-                                    | StorageClass::Generic => {
-                                        Err("can not be used as part of an entry's interface")
-                                    }
-
-                                    _ => Ok(()),
-                                };
-
-                                if let Err(msg) = valid {
-                                    self.tcx.dcx().span_err(
-                                        span,
-                                        format!("`{storage_class:?}` storage class {msg}"),
-                                    );
-                                }
-                            }
-                        }
+                | SpirvAttribute::SpecConstant(_) => {
+                    if matches!(target, Target::Field)
+                        && matches!(
+                            parsed_attr,
+                            SpirvAttribute::Builtin(_) | SpirvAttribute::PerPrimitive
+                        )
+                    {
                         Ok(())
-                    }
+                    } else {
+                        match target {
+                            Target::Param => {
+                                let parent_hir_id = self.tcx.parent_hir_id(hir_id);
+                                let parent_is_entry_point =
+                                    parse_attrs(self.tcx.hir().attrs(parent_hir_id))
+                                        .filter_map(|r| r.ok())
+                                        .any(|(_, attr)| matches!(attr, SpirvAttribute::Entry(_)));
+                                if !parent_is_entry_point {
+                                    self.tcx.dcx().span_err(
+                                                span,
+                                                "attribute is only valid on a parameter of an entry-point function",
+                                            );
+                                } else {
+                                    // FIXME(eddyb) should we just remove all 5 of these storage class
+                                    // attributes, instead of disallowing them here?
+                                    if let SpirvAttribute::StorageClass(storage_class) = parsed_attr
+                                    {
+                                        let valid = match storage_class {
+                                            StorageClass::Input | StorageClass::Output => Err(
+                                                "is the default and should not be explicitly specified",
+                                            ),
 
-                    _ => Err(Expected("function parameter")),
-                },
+                                            StorageClass::Private
+                                            | StorageClass::Function
+                                            | StorageClass::Generic => Err(
+                                                "can not be used as part of an entry's interface",
+                                            ),
+
+                                            _ => Ok(()),
+                                        };
+
+                                        if let Err(msg) = valid {
+                                            self.tcx.dcx().span_err(
+                                                span,
+                                                format!("`{storage_class:?}` storage class {msg}"),
+                                            );
+                                        }
+                                    }
+                                }
+                                Ok(())
+                            }
+
+                            _ => Err(Expected("function parameter")),
+                        }
+                    }
+                }
                 SpirvAttribute::BufferLoadIntrinsic | SpirvAttribute::BufferStoreIntrinsic => {
                     match target {
                         Target::Fn => Ok(()),
